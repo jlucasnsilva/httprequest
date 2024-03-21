@@ -3,6 +3,7 @@ package requestconv
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -35,6 +36,8 @@ var (
 )
 
 func Convert[T any](from *http.Request, to *T, using Toolbox) error {
+	var values url.Values
+
 	v := reflect.ValueOf(to).Elem()
 	for _, f := range reflect.VisibleFields(v.Type()) {
 		if param := f.Tag.Get(urlParamTag); param != "" {
@@ -45,8 +48,16 @@ func Convert[T any](from *http.Request, to *T, using Toolbox) error {
 			setValue(f.Name, v.FieldByName(f.Name), using.Param(from, key), meta)
 		}
 
-		if value := f.Tag.Get(urlValueTag); value != "" {
-			// TODO
+		if valueTag := f.Tag.Get(urlValueTag); valueTag != "" {
+			key, meta, err := splitTag(valueTag)
+			if err != nil {
+				return err
+			}
+			if values == nil {
+				values = from.URL.Query()
+			}
+			// TODO array
+			setValue(f.Name, v.FieldByName(f.Name), values.Get(key), meta)
 		}
 
 		if body := f.Tag.Get(requestBodyTag); body != "" {
