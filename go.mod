@@ -1,3 +1,3 @@
-module github.com/jlucasnsilva/requestconv
+module github.com/jlucasnsilva/httprequest
 
 go 1.20
