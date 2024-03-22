@@ -1,6 +1,7 @@
-package requestconv
+package httprequest
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -11,10 +12,12 @@ import (
 )
 
 type (
-	Toolbox struct {
+	config struct {
 		Param     func(*http.Request, string) string
 		Unmarshal func(*http.Request, any) error
 	}
+
+	Option func(*config)
 )
 
 const (
@@ -35,17 +38,33 @@ var (
 	durationType = reflect.TypeOf(time.Duration(0))
 )
 
-func Convert[T any](from *http.Request, to *T, using Toolbox) error {
-	var values url.Values
+var defaultCfg = config{
+	Unmarshal: func(r *http.Request, v any) error {
+		return json.NewDecoder(r.Body).Decode(v)
+	},
+	Param: func(r *http.Request, key string) string {
+		panic("No Param function provided")
+	},
+}
 
-	v := reflect.ValueOf(to).Elem()
+func As[T any](req *http.Request, obj *T, opts ...Option) error {
+	var (
+		values url.Values
+		cfg    = defaultCfg
+	)
+
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	v := reflect.ValueOf(obj).Elem()
 	for _, f := range reflect.VisibleFields(v.Type()) {
 		if param := f.Tag.Get(urlParamTag); param != "" {
 			key, meta, err := splitTag(param)
 			if err != nil {
 				return err
 			}
-			setValue(f.Name, v.FieldByName(f.Name), using.Param(from, key), meta)
+			setValue(f.Name, v.FieldByName(f.Name), cfg.Param(req, key), meta)
 		}
 
 		if valueTag := f.Tag.Get(urlValueTag); valueTag != "" {
@@ -54,7 +73,7 @@ func Convert[T any](from *http.Request, to *T, using Toolbox) error {
 				return err
 			}
 			if values == nil {
-				values = from.URL.Query()
+				values = req.URL.Query()
 			}
 			// TODO array
 			setValue(f.Name, v.FieldByName(f.Name), values.Get(key), meta)
@@ -65,6 +84,18 @@ func Convert[T any](from *http.Request, to *T, using Toolbox) error {
 		}
 	}
 	return nil
+}
+
+func WithParamGetter(getter func(*http.Request, string) string) Option {
+	return func(cfg *config) {
+		cfg.Param = getter
+	}
+}
+
+func WithUnmarshaller(unmarshal func(*http.Request, any) error) Option {
+	return func(cfg *config) {
+		cfg.Unmarshal = unmarshal
+	}
 }
 
 func setValue(name string, f reflect.Value, param string, meta map[string]string) error {
