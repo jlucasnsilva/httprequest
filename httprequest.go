@@ -34,10 +34,7 @@ var (
 	ErrInvalidURLValueTag      = errors.New("invalid url value tag")
 )
 
-var (
-	timeType     = reflect.TypeOf(time.Time{})
-	durationType = reflect.TypeOf(time.Duration(0))
-)
+var timeType = reflect.TypeOf(time.Time{})
 
 var defaultCfg = config{
 	Unmarshal: func(r *http.Request, v any) error {
@@ -69,14 +66,14 @@ func As[T any](req *http.Request, obj *T, opts ...Option) error {
 			if err != nil {
 				return err
 			}
-			setValue(f.Name, v.FieldByName(f.Name), cfg.Param(req, key), meta)
+			setValue(v.FieldByName(f.Name), cfg.Param(req, key), meta)
 		} else if valueTag := f.Tag.Get(urlQueryTag); valueTag != "" {
 			key, meta, err := splitTag(valueTag)
 			if err != nil {
 				return err
 			}
 			// TODO handle array
-			setValue(f.Name, v.FieldByName(f.Name), values.Get(key), meta)
+			setValue(v.FieldByName(f.Name), values.Get(key), meta)
 		} else if body := f.Tag.Get(requestBodyTag); body != "" {
 			if decodedBody {
 				panic("Cannot decode the body twice")
@@ -114,7 +111,7 @@ func WithQueryFunc(q func(*http.Request) url.Values) Option {
 	}
 }
 
-func setValue(name string, f reflect.Value, param string, meta map[string]string) error {
+func setValue(f reflect.Value, param string, meta map[string]string) error {
 	switch f.Kind() {
 	case reflect.Bool:
 		if v, err := strconv.ParseBool(param); err != nil {
@@ -204,13 +201,8 @@ func setValue(name string, f reflect.Value, param string, meta map[string]string
 			return err
 		}
 		f.Set(reflect.ValueOf(t))
-	case durationType:
-		d, err := time.ParseDuration(param)
-		if err != nil {
-			return err
-		}
-		f.Set(reflect.ValueOf(d))
 	}
+
 	return nil
 }
 
