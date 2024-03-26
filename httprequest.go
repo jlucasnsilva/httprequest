@@ -15,6 +15,7 @@ type (
 	config struct {
 		Param     func(*http.Request, string) string
 		Unmarshal func(*http.Request, any) error
+		Query     func(*http.Request) url.Values
 	}
 
 	Option func(*config)
@@ -22,7 +23,7 @@ type (
 
 const (
 	urlParamTag    = "url-param"
-	urlValueTag    = "url-value"
+	urlQueryTag    = "url-query"
 	requestBodyTag = "request-body"
 	timeLayoutMeta = "layout"
 )
@@ -43,14 +44,18 @@ var defaultCfg = config{
 		return json.NewDecoder(r.Body).Decode(v)
 	},
 	Param: func(r *http.Request, key string) string {
-		panic("No Param function provided")
+		return r.PathValue(key)
+	},
+	Query: func(r *http.Request) url.Values {
+		return r.URL.Query()
 	},
 }
 
 func As[T any](req *http.Request, obj *T, opts ...Option) error {
 	var (
-		values url.Values
-		cfg    = defaultCfg
+		values      = req.URL.Query()
+		cfg         = defaultCfg
+		decodedBody = false
 	)
 
 	for _, opt := range opts {
@@ -58,35 +63,40 @@ func As[T any](req *http.Request, obj *T, opts ...Option) error {
 	}
 
 	v := reflect.ValueOf(obj).Elem()
-	for _, f := range reflect.VisibleFields(v.Type()) {
+	for i, f := range reflect.VisibleFields(v.Type()) {
 		if param := f.Tag.Get(urlParamTag); param != "" {
 			key, meta, err := splitTag(param)
 			if err != nil {
 				return err
 			}
 			setValue(f.Name, v.FieldByName(f.Name), cfg.Param(req, key), meta)
-		}
-
-		if valueTag := f.Tag.Get(urlValueTag); valueTag != "" {
+		} else if valueTag := f.Tag.Get(urlQueryTag); valueTag != "" {
 			key, meta, err := splitTag(valueTag)
 			if err != nil {
 				return err
 			}
-			if values == nil {
-				values = req.URL.Query()
-			}
-			// TODO array
+			// TODO handle array
 			setValue(f.Name, v.FieldByName(f.Name), values.Get(key), meta)
-		}
+		} else if body := f.Tag.Get(requestBodyTag); body != "" {
+			if decodedBody {
+				panic("Cannot decode the body twice")
+			}
 
-		if body := f.Tag.Get(requestBodyTag); body != "" {
-			// TODO
+			decodedBody = true
+			rvalue := reflect.ValueOf(req)
+			target := v.FieldByIndex([]int{i})
+			decode := reflect.ValueOf(cfg.Unmarshal)
+			in := []reflect.Value{rvalue, target}
+			ret := decode.Call(in)
+			if len(ret) > 0 {
+				return ret[0].Interface().(error)
+			}
 		}
 	}
 	return nil
 }
 
-func WithParamGetter(getter func(*http.Request, string) string) Option {
+func WithURLParamFunc(getter func(*http.Request, string) string) Option {
 	return func(cfg *config) {
 		cfg.Param = getter
 	}
@@ -95,6 +105,12 @@ func WithParamGetter(getter func(*http.Request, string) string) Option {
 func WithUnmarshaller(unmarshal func(*http.Request, any) error) Option {
 	return func(cfg *config) {
 		cfg.Unmarshal = unmarshal
+	}
+}
+
+func WithQueryFunc(q func(*http.Request) url.Values) Option {
+	return func(cfg *config) {
+		cfg.Query = q
 	}
 }
 
@@ -198,9 +214,40 @@ func setValue(name string, f reflect.Value, param string, meta map[string]string
 	return nil
 }
 
+func splitTag(tag string) (string, map[string]string, error) {
+	parts := strings.Split(tag, ",")
+	if len(parts) < 1 || parts[0] == "" {
+		return "", nil, ErrInvalidParamTag
+	}
+
+	name := strings.TrimSpace(parts[0])
+	if name == "" {
+		return "", nil, ErrInvalidParamTag
+	}
+
+	if len(parts) < 2 {
+		return name, nil, nil
+	}
+
+	m := make(map[string]string)
+	for _, p := range parts[1:] {
+		kv := strings.Split(p, "=")
+		if len(kv) != 2 {
+			return "", nil, ErrInvalidParamTagKeyValue
+		}
+
+		k := strings.TrimSpace(kv[0])
+		v := strings.TrimSpace(kv[1])
+		if k == "" || v == "" {
+			return "", nil, ErrInvalidParamTagKeyValue
+		}
+		m[k] = v
+	}
+	return name, m, nil
+}
+
 func timeLayout(m map[string]string) string {
-	layout := m[timeLayoutMeta]
-	switch layout {
+	switch layout := m[timeLayoutMeta]; layout {
 	case "Layout":
 		return time.Layout
 	case "ANSIC":
@@ -242,36 +289,4 @@ func timeLayout(m map[string]string) string {
 	default:
 		return time.RFC3339
 	}
-}
-
-func splitTag(tag string) (string, map[string]string, error) {
-	parts := strings.Split(tag, ",")
-	if len(parts) < 1 {
-		return "", nil, ErrInvalidParamTag
-	}
-
-	name := strings.TrimSpace(parts[0])
-	if name == "" {
-		return "", nil, ErrInvalidParamTag
-	}
-
-	if len(parts) > 1 {
-		return name, nil, nil
-	}
-
-	m := make(map[string]string)
-	for _, p := range parts[1:] {
-		kv := strings.Split(p, "=")
-		if len(kv) != 2 {
-			return "", nil, ErrInvalidParamTagKeyValue
-		}
-
-		k := strings.TrimSpace(kv[0])
-		v := strings.TrimSpace(kv[1])
-		if k == "" || v == "" {
-			return "", nil, ErrInvalidParamTagKeyValue
-		}
-		m[k] = v
-	}
-	return name, m, nil
 }
