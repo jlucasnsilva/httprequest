@@ -22,10 +22,14 @@ type (
 )
 
 const (
+	tagName        = "from"
+	timeLayoutMeta = "layout"
+)
+
+const (
 	urlParamTag    = "url-param"
 	urlQueryTag    = "url-query"
 	requestBodyTag = "request-body"
-	timeLayoutMeta = "layout"
 )
 
 var (
@@ -48,7 +52,7 @@ var defaultCfg = config{
 	},
 }
 
-func As[T any](req *http.Request, obj *T, opts ...Option) error {
+func As(req *http.Request, obj any, opts ...Option) error {
 	var (
 		values      = req.URL.Query()
 		cfg         = defaultCfg
@@ -61,20 +65,22 @@ func As[T any](req *http.Request, obj *T, opts ...Option) error {
 
 	v := reflect.ValueOf(obj).Elem()
 	for i, f := range reflect.VisibleFields(v.Type()) {
-		if param := f.Tag.Get(urlParamTag); param != "" {
-			key, meta, err := splitTag(param)
-			if err != nil {
-				return err
-			}
-			setValue(v.FieldByName(f.Name), cfg.Param(req, key), meta)
-		} else if valueTag := f.Tag.Get(urlQueryTag); valueTag != "" {
-			key, meta, err := splitTag(valueTag)
-			if err != nil {
-				return err
-			}
-			// TODO handle array
-			setValue(v.FieldByName(f.Name), values.Get(key), meta)
-		} else if body := f.Tag.Get(requestBodyTag); body != "" {
+		tag := f.Tag.Get(tagName)
+		if tag == "" || tag == "-" {
+			continue
+		}
+
+		kind, source, meta, err := splitTag(tag)
+		if err != nil {
+			return err
+		}
+
+		switch kind {
+		case urlParamTag:
+			setValue(v.FieldByName(f.Name), cfg.Param(req, source), meta)
+		case urlQueryTag:
+			setValue(v.FieldByName(f.Name), values.Get(source), meta)
+		case requestBodyTag:
 			if decodedBody {
 				panic("Cannot decode the body twice")
 			}
@@ -88,6 +94,8 @@ func As[T any](req *http.Request, obj *T, opts ...Option) error {
 			if len(ret) > 0 {
 				return ret[0].Interface().(error)
 			}
+		default:
+			panic("Invalid kind: " + kind)
 		}
 	}
 	return nil
@@ -206,36 +214,49 @@ func setValue(f reflect.Value, param string, meta map[string]string) error {
 	return nil
 }
 
-func splitTag(tag string) (string, map[string]string, error) {
+func splitTag(tag string) (kind, source string, meta map[string]string, err error) {
 	parts := strings.Split(tag, ",")
 	if len(parts) < 1 || parts[0] == "" {
-		return "", nil, ErrInvalidParamTag
+		return "", "", nil, ErrInvalidParamTag
 	}
 
-	name := strings.TrimSpace(parts[0])
-	if name == "" {
-		return "", nil, ErrInvalidParamTag
+	kv := strings.TrimSpace(parts[0])
+	if kv == "" || kv == "=" {
+		return "", "", nil, ErrInvalidParamTag
 	}
 
+	if kv == requestBodyTag {
+		return kv, "", nil, nil
+	}
+
+	kind, source, err = splitKV(kv)
 	if len(parts) < 2 {
-		return name, nil, nil
+		return kind, source, nil, err
 	}
 
 	m := make(map[string]string)
 	for _, p := range parts[1:] {
-		kv := strings.Split(p, "=")
-		if len(kv) != 2 {
-			return "", nil, ErrInvalidParamTagKeyValue
+		key, value, err := splitKV(p)
+		if err != nil {
+			return "", "", nil, err
 		}
 
-		k := strings.TrimSpace(kv[0])
-		v := strings.TrimSpace(kv[1])
+		k := strings.TrimSpace(key)
+		v := strings.TrimSpace(value)
 		if k == "" || v == "" {
-			return "", nil, ErrInvalidParamTagKeyValue
+			return "", "", nil, ErrInvalidParamTagKeyValue
 		}
 		m[k] = v
 	}
-	return name, m, nil
+	return kind, source, m, nil
+}
+
+func splitKV(kv string) (string, string, error) {
+	parts := strings.Split(kv, "=")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", ErrInvalidParamTagKeyValue
+	}
+	return parts[0], parts[1], nil
 }
 
 func timeLayout(m map[string]string) string {

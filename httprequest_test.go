@@ -1,30 +1,24 @@
 package httprequest
 
 import (
+	"net/http"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 type (
-	boolStruct struct {
-		Param bool `url-param:"param"`
-		Query bool `url-query:"query"`
+	testStruct struct {
+		Param bool     `from:"url-param=param"`
+		Query bool     `from:"url-query=query"`
+		Body  testBody `from:"request-body"`
 	}
 
-	intStruct struct {
-		Int     int
-		Int8    int8
-		Int16   int16
-		Int32   int32
-		Int64   int64
-		Uint    uint
-		Uint8   uint8
-		Uint16  uint16
-		Uint32  uint32
-		Uint64  uint64
-		Float32 float32
-		Float64 float64
+	testBody struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
 	}
 )
 
@@ -38,4 +32,27 @@ func TestOptions(t *testing.T) {
 	assert.NotNil(t, cfg.Query)
 	assert.NotNil(t, cfg.Param)
 	assert.NotNil(t, cfg.Unmarshal)
+}
+
+func TestAs(t *testing.T) {
+	obj := testStruct{}
+	err := As(
+		nil,
+		&obj,
+		WithQueryFunc(func(r *http.Request) url.Values {
+			return url.Values{
+				"query_a": []string{"query_a_value"},
+				"query_t": []string{time.Now().Format(time.RFC3339)},
+			}
+		}),
+		WithURLParamFunc(func(r *http.Request, key string) string {
+			if key == "id" {
+				return "10"
+			}
+			if key == "flag" {
+				return "true"
+			}
+			return ""
+		}),
+	)
 }
