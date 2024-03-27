@@ -54,7 +54,8 @@ var defaultCfg = config{
 
 func As(req *http.Request, obj any, opts ...Option) error {
 	var (
-		values      = req.URL.Query()
+		values url.Values
+
 		cfg         = defaultCfg
 		decodedBody = false
 	)
@@ -63,6 +64,7 @@ func As(req *http.Request, obj any, opts ...Option) error {
 		opt(&cfg)
 	}
 
+	values = cfg.Query(req)
 	v := reflect.ValueOf(obj).Elem()
 	for i, f := range reflect.VisibleFields(v.Type()) {
 		tag := f.Tag.Get(tagName)
@@ -89,9 +91,9 @@ func As(req *http.Request, obj any, opts ...Option) error {
 			rvalue := reflect.ValueOf(req)
 			target := v.FieldByIndex([]int{i})
 			decode := reflect.ValueOf(cfg.Unmarshal)
-			in := []reflect.Value{rvalue, target}
+			in := []reflect.Value{rvalue, target.Addr()}
 			ret := decode.Call(in)
-			if len(ret) > 0 {
+			if len(ret) > 0 && !ret[0].IsNil() {
 				return ret[0].Interface().(error)
 			}
 		default:
@@ -199,6 +201,8 @@ func setValue(f reflect.Value, param string, meta map[string]string) error {
 		} else {
 			f.SetFloat(v)
 		}
+	case reflect.String:
+		f.SetString(param)
 	}
 
 	switch f.Type() {
