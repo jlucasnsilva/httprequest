@@ -91,7 +91,18 @@ func As(req *http.Request, obj any, opts ...Option) error {
 			rvalue := reflect.ValueOf(req)
 			target := v.FieldByIndex([]int{i})
 			decode := reflect.ValueOf(cfg.Unmarshal)
-			in := []reflect.Value{rvalue, target.Addr()}
+			if target.Kind() == reflect.Pointer {
+				if target.IsNil() {
+					typ := target.Type().Elem()
+					target.Set(reflect.New(typ))
+				}
+			}
+
+			in := []reflect.Value{rvalue, target}
+			if target.Kind() != reflect.Pointer {
+				in[1] = target.Addr()
+			}
+
 			ret := decode.Call(in)
 			if len(ret) > 0 && !ret[0].IsNil() {
 				return ret[0].Interface().(error)
